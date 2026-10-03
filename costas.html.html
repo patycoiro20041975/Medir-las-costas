@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Medidor Interactivo de Costas - Aproximación por Segmentos</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --text: #0f172a;
+      --muted: #64748b;
+      --border: #e2e8f0;
+      --accent: #ef4444;
+      --accent-mid: #10b981;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 20px;
+      display: flex;
+      justify-content: center;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 900px;
+      background: var(--card);
+      border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);
+      padding: 24px;
+      border: 1px solid var(--border);
+    }
+
+    header {
+      margin-bottom: 20px;
+      text-align: center;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      color: var(--text);
+      margin-bottom: 6px;
+    }
+
+    p.subtitle {
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .controls-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 16px;
+      background: #f1f5f9;
+      padding: 16px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    label {
+      font-size: 0.85rem;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    select, input[type="range"] {
+      width: 100%;
+      padding: 8px;
+      border-radius: 6px;
+      border: 1px solid #cbd5e1;
+      font-size: 0.95rem;
+    }
+
+    .range-val {
+      font-weight: 700;
+      color: var(--primary);
+    }
+
+    .checkbox-group {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .canvas-container {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 16 / 9;
+      background: #e0f2fe;
+      border-radius: 8px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+
+    canvas {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .stats-bar {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-top: 20px;
+    }
+
+    .stat-card {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      padding: 12px;
+      border-radius: 8px;
+      text-align: center;
+    }
+
+    .stat-card .title {
+      font-size: 0.8rem;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    .stat-card .value {
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: var(--primary);
+      margin-top: 4px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <h1>Medición Aproximada de Costas</h1>
+    <p class="subtitle">Explorando la aproximación de curvas mediante poligonales y puntos medios</p>
+  </header>
+
+  <div class="controls-grid">
+    <div class="control-group">
+      <label for="deptSelect">Departamento:</label>
+      <select id="deptSelect">
+        <option value="montevideo">Montevideo</option>
+        <option value="maldonado">Maldonado</option>
+        <option value="rocha">Rocha</option>
+        <option value="colonia">Colonia</option>
+        <option value="sanjose">San José</option>
+        <option value="canelones">Canelones</option>
+      </select>
+    </div>
+
+    <div class="control-group">
+      <label for="segmentSlider">Cantidad de segmentos ($N$): <span id="segmentVal" class="range-val">4</span></label>
+      <input type="range" id="segmentSlider" min="2" max="60" value="4" step="1">
+    </div>
+
+    <div class="control-group">
+      <div class="checkbox-group">
+        <input type="checkbox" id="showPoints" checked>
+        <label for="showPoints">Mostrar puntos medios y vértices</label>
+      </div>
+      <div class="checkbox-group">
+        <input type="checkbox" id="showCoast" checked>
+        <label for="showCoast">Mostrar costa real (curva)</label>
+      </div>
+    </div>
+  </div>
+
+  <div class="canvas-container">
+    <canvas id="coastCanvas"></canvas>
+  </div>
+
+  <div class="stats-bar">
+    <div class="stat-card">
+      <div class="title">Segmentos ($N$)</div>
+      <div class="value" id="statN">4</div>
+    </div>
+    <div class="stat-card">
+      <div class="title">Longitud Estimada</div>
+      <div class="value" id="statLength">0 km</div>
+    </div>
+    <div class="stat-card">
+      <div class="title">Puntos de Muestreo</div>
+      <div class="value" id="statPoints">5</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Definición de geometrías aproximadas de las costas de departamentos (coordenadas relativas 0-100)
+  const coastData = {
+    montevideo: {
+      name: "Montevideo",
+      scaleKm: 42,
+      points: [
+        {x: 10, y: 75}, {x: 20, y: 70}, {x: 28, y: 80}, {x: 35, y: 65},
+        {x: 45, y: 72}, {x: 55, y: 55}, {x: 68, y: 62}, {x: 80, y: 50}, {x: 90, y: 55}
+      ]
+    },
+    maldonado: {
+      name: "Maldonado",
+      scaleKm: 86,
+      points: [
+        {x: 10, y: 40}, {x: 25, y: 45}, {x: 35, y: 60}, {x: 45, y: 85},
+        {x: 55, y: 70}, {x: 70, y: 50}, {x: 80, y: 55}, {x: 90, y: 40}
+      ]
+    },
+    rocha: {
+      name: "Rocha",
+      scaleKm: 170,
+      points: [
+        {x: 10, y: 80}, {x: 25, y: 70}, {x: 40, y: 60}, {x: 55, y: 50},
+        {x: 70, y: 35}, {x: 80, y: 25}, {x: 90, y: 20}
+      ]
+    },
+    colonia: {
+      name: "Colonia",
+      scaleKm: 180,
+      points: [
+        {x: 10, y: 20}, {x: 15, y: 45}, {x: 25, y: 70}, {x: 35, y: 85},
+        {x: 50, y: 80}, {x: 65, y: 75}, {x: 80, y: 65}, {x: 90, y: 60}
+      ]
+    },
+    sanjose: {
+      name: "San José",
+      scaleKm: 95,
+      points: [
+        {x: 10, y: 40}, {x: 25, y: 45}, {x: 45, y: 55}, {x: 65, y: 60},
+        {x: 80, y: 68}, {x: 90, y: 75}
+      ]
+    },
+    canelones: {
+      name: "Canelones",
+      scaleKm: 65,
+      points: [
+        {x: 10, y: 50}, {x: 25, y: 52}, {x: 40, y: 48}, {x: 55, y: 55},
+        {x: 70, y: 50}, {x: 85, y: 53}, {x: 90, y: 50}
+      ]
+    }
+  };
+
+  const canvas = document.getElementById('coastCanvas');
+  const ctx = canvas.getContext('2d');
+  const deptSelect = document.getElementById('deptSelect');
+  const segmentSlider = document.getElementById('segmentSlider');
+  const segmentVal = document.getElementById('segmentVal');
+  const showPointsCheck = document.getElementById('showPoints');
+  const showCoastCheck = document.getElementById('showCoast');
+
+  const statN = document.getElementById('statN');
+  const statLength = document.getElementById('statLength');
+  const statPoints = document.getElementById('statPoints');
+
+  function resizeCanvas() {
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = rect.width * window.devicePixelRatio;
+    canvas.height = rect.height * window.devicePixelRatio;
+    ctx.scale(window.devicePixelRatio, window.devicePixelRatio);
+    render();
+  }
+
+  window.addEventListener('resize', resizeCanvas);
+
+  // Catmull-Rom Spline para obtener una curva suave a partir de los puntos clave
+  function getSplinePoint(pts, t) {
+    const p = (pts.length - 1) * t;
+    const intPoint = Math.floor(p);
+    const weight = p - intPoint;
+
+    const p0 = pts[Math.max(0, intPoint - 1)];
+    const p1 = pts[intPoint];
+    const p2 = pts[Math.min(pts.length - 1, intPoint + 1)];
+    const p3 = pts[Math.min(pts.length - 1, intPoint + 2)];
+
+    return {
+      x: 0.5 * ((2 * p1.x) + (-p0.x + p2.x) * weight + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * weight * weight + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * weight * weight * weight),
+      y: 0.5 * ((2 * p1.y) + (-p0.y + p2.y) * weight + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * weight * weight + (-p0.y + 3 * p1.y - 3 * p2.y + p3.x) * weight * weight * weight)
+    };
+  }
+
+  function render() {
+    const rect = canvas.getBoundingClientRect();
+    const width = rect.width;
+    const height = rect.height;
+
+    ctx.clearRect(0, 0, width, height);
+
+    const deptKey = deptSelect.value;
+    const data = coastData[deptKey];
+    const N = parseInt(segmentSlider.value, 10);
+    segmentVal.textContent = N;
+
+    // Convertir coordenadas relativas a px
+    const padding = 50;
+    const drawW = width - padding * 2;
+    const drawH = height - padding * 2;
+
+    const rawPoints = data.points.map(pt => ({
+      x: padding + (pt.x / 100) * drawW,
+      y: padding + (pt.y / 100) * drawH
+    }));
+
+    // Generar muestras finas para la costa real
+    const fineSamples = 500;
+    const realCurve = [];
+    for (let i <= fineSamples; i++) {
+      const t = i / fineSamples;
+      realCurve.push(getSplinePoint(rawPoints, t));
+    }
+
+    // 1. Dibujar Costa Real (Azul suave)
+    if (showCoastCheck.checked) {
+      ctx.beginPath();
+      ctx.moveTo(realCurve[0].x, realCurve[0].y);
+      for (let i = 1; i < realCurve.length; i++) {
+        ctx.lineTo(realCurve[i].x, realCurve[i].y);
+      }
+      ctx.strokeStyle = '#3b82f6';
+      ctx.lineWidth = 4;
+      ctx.stroke();
+    }
+
+    // 2. Calular Puntos de Aproximación Poligonal
+    const approxPoints = [];
+    for (let i = 0; i <= N; i++) {
+      const t = i / N;
+      approxPoints.push(getSplinePoint(rawPoints, t));
+    }
+
+    // 3. Dibujar Segmentos de Aproximación (Rojo)
+    ctx.beginPath();
+    ctx.moveTo(approxPoints[0].x, approxPoints[0].y);
+    for (let i = 1; i < approxPoints.length; i++) {
+      ctx.lineTo(approxPoints[i].x, approxPoints[i].y);
+    }
+    ctx.strokeStyle = '#ef4444';
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4, 4]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // 4. Calcular Longitud Total en km
+    let totalPxLength = 0;
+    for (let i = 0; i < approxPoints.length - 1; i++) {
+      const dx = approxPoints[i+1].x - approxPoints[i].x;
+      const dy = approxPoints[i+1].y - approxPoints[i].y;
+      totalPxLength += Math.sqrt(dx * dx + dy * dy);
+    }
+
+    // Referencia de escala basada en la longitud total de la curva
+    let curvePxLength = 0;
+    for (let i = 0; i < realCurve.length - 1; i++) {
+      const dx = realCurve[i+1].x - realCurve[i].x;
+      const dy = realCurve[i+1].y - realCurve[i].y;
+      curvePxLength += Math.sqrt(dx * dx + dy * dy);
+    }
+
+    const estimatedKm = (totalPxLength / curvePxLength) * data.scaleKm;
+
+    // 5. Dibujar Puntos Medios y Vértices
+    if (showPointsCheck.checked) {
+      // Vértices (Rojos)
+      approxPoints.forEach(pt => {
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 4, 0, Math.PI * 2);
+        ctx.fillStyle = '#ef4444';
+        ctx.fill();
+      });
+
+      // Puntos Medios de cada segmento (Verde)
+      for (let i = 0; i < approxPoints.length - 1; i++) {
+        const mx = (approxPoints[i].x + approxPoints[i+1].x) / 2;
+        const my = (approxPoints[i].y + approxPoints[i+1].y) / 2;
+
+        ctx.beginPath();
+        ctx.arc(mx, my, 3, 0, Math.PI * 2);
+        ctx.fillStyle = '#10b981';
+        ctx.fill();
+      }
+    }
+
+    // Actualizar estadísticas
+    statN.textContent = N;
+    statLength.textContent = `${estimatedKm.toFixed(2)} km`;
+    statPoints.textContent = approxPoints.length;
+  }
+
+  deptSelect.addEventListener('change', render);
+  segmentSlider.addEventListener('input', render);
+  showPointsCheck.addEventListener('change', render);
+  showCoastCheck.addEventListener('change', render);
+
+  // Inicializar
+  setTimeout(resizeCanvas, 50);
+</script>
+</body>
+</html>
